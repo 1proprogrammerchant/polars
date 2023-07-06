@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import typing
 from datetime import timedelta
 from typing import Any, cast
 
@@ -8,47 +7,7 @@ import numpy as np
 import pytest
 
 import polars as pl
-from polars.testing import assert_frame_equal, assert_series_equal
-
-
-def test_date_datetime() -> None:
-    df = pl.DataFrame(
-        {
-            "year": [2001, 2002, 2003],
-            "month": [1, 2, 3],
-            "day": [1, 2, 3],
-            "hour": [23, 12, 8],
-        }
-    )
-    out = df.select(
-        pl.all(),
-        pl.datetime("year", "month", "day", "hour").dt.hour().cast(int).alias("h2"),
-        pl.date("year", "month", "day").dt.day().cast(int).alias("date"),
-    )
-    assert_series_equal(out["date"], df["day"].rename("date"))
-    assert_series_equal(out["h2"], df["hour"].rename("h2"))
-
-
-def test_time() -> None:
-    df = pl.DataFrame(
-        {
-            "hour": [7, 14, 21],
-            "min": [10, 20, 30],
-            "sec": [15, 30, 45],
-            "micro": [123456, 555555, 987654],
-        }
-    )
-    out = df.select(
-        pl.all(),
-        pl.time("hour", "min", "sec", "micro").dt.hour().cast(int).alias("h2"),
-        pl.time("hour", "min", "sec", "micro").dt.minute().cast(int).alias("m2"),
-        pl.time("hour", "min", "sec", "micro").dt.second().cast(int).alias("s2"),
-        pl.time("hour", "min", "sec", "micro").dt.microsecond().cast(int).alias("ms2"),
-    )
-    assert_series_equal(out["h2"], df["hour"].rename("h2"))
-    assert_series_equal(out["m2"], df["min"].rename("m2"))
-    assert_series_equal(out["s2"], df["sec"].rename("s2"))
-    assert_series_equal(out["ms2"], df["micro"].rename("ms2"))
+from polars.testing import assert_frame_equal
 
 
 def test_concat_align() -> None:
@@ -389,7 +348,6 @@ def test_overflow_diff() -> None:
     }
 
 
-@typing.no_type_check
 def test_fill_null_unknown_output_type() -> None:
     df = pl.DataFrame(
         {
@@ -531,7 +489,3 @@ def test_approx_unique() -> None:
         df1.select(pl.col("b").approx_unique()),
         pl.DataFrame({"b": pl.Series(values=[3], dtype=pl.UInt32)}),
     )
-
-
-def test_range_decreasing() -> None:
-    assert pl.arange(10, 1, -2, eager=True).to_list() == list(range(10, 1, -2))

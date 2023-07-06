@@ -356,6 +356,7 @@ impl PySeries {
                     | DataType::Duration(_)
                     | DataType::Categorical(_)
                     | DataType::Binary
+                    | DataType::Array(_, _)
                     | DataType::Time
             ) || !skip_nulls
             {
@@ -495,28 +496,6 @@ impl PySeries {
                     )?;
                     ca.into_series()
                 }
-                Some(DataType::Date) => {
-                    let ca: Int32Chunked = dispatch_apply!(
-                        series,
-                        apply_lambda_with_primitive_out_type,
-                        py,
-                        lambda,
-                        0,
-                        None
-                    )?;
-                    ca.into_date().into_series()
-                }
-                Some(DataType::Datetime(tu, tz)) => {
-                    let ca: Int64Chunked = dispatch_apply!(
-                        series,
-                        apply_lambda_with_primitive_out_type,
-                        py,
-                        lambda,
-                        0,
-                        None
-                    )?;
-                    ca.into_datetime(tu, tz).into_series()
-                }
                 Some(DataType::Utf8) => {
                     let ca = dispatch_apply!(
                         series,
@@ -559,10 +538,11 @@ impl PySeries {
         Ok(s.into())
     }
 
-    fn to_dummies(&self, separator: Option<&str>) -> PyResult<PyDataFrame> {
+    #[pyo3(signature = (separator, drop_first=false))]
+    fn to_dummies(&self, separator: Option<&str>, drop_first: bool) -> PyResult<PyDataFrame> {
         let df = self
             .series
-            .to_dummies(separator)
+            .to_dummies(separator, drop_first)
             .map_err(PyPolarsErr::from)?;
         Ok(df.into())
     }

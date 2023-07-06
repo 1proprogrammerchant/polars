@@ -6,10 +6,13 @@ pub mod cat;
 pub use cat::*;
 mod arithmetic;
 mod arity;
+#[cfg(feature = "dtype-array")]
+mod array;
 pub mod binary;
 #[cfg(feature = "temporal")]
 pub mod dt;
 mod expr;
+mod expr_dyn_fn;
 mod from;
 pub(crate) mod function_expr;
 #[cfg(feature = "compile")]
@@ -19,6 +22,11 @@ mod list;
 mod meta;
 pub(crate) mod names;
 mod options;
+#[cfg(all(feature = "python", feature = "serde"))]
+pub mod python_udf;
+#[cfg(feature = "random")]
+mod random;
+mod selector;
 #[cfg(feature = "strings")]
 pub mod string;
 #[cfg(feature = "dtype-struct")]
@@ -28,10 +36,14 @@ use std::fmt::Debug;
 use std::sync::Arc;
 
 pub use arity::*;
+#[cfg(feature = "dtype-array")]
+pub use array::*;
 pub use expr::*;
 pub use function_expr::*;
 pub use functions::*;
 pub use list::*;
+#[cfg(feature = "meta")]
+pub use meta::*;
 pub use options::*;
 use polars_arrow::prelude::QuantileInterpolOptions;
 use polars_core::prelude::*;
@@ -41,6 +53,9 @@ use polars_core::series::IsSorted;
 use polars_core::utils::{try_get_supertype, NoNull};
 #[cfg(feature = "rolling_window")]
 use polars_time::series::SeriesOpsTime;
+pub(crate) use selector::Selector;
+#[cfg(feature = "dtype-struct")]
+pub use struct_::*;
 
 use crate::constants::MAP_LIST_NAME;
 pub use crate::logical_plan::lit;
@@ -103,9 +118,19 @@ impl Expr {
         binary_expr(self, Operator::Eq, other.into())
     }
 
+    /// Compare `Expr` with other `Expr` on equality where `None == None`
+    pub fn eq_missing<E: Into<Expr>>(self, other: E) -> Expr {
+        binary_expr(self, Operator::EqValidity, other.into())
+    }
+
     /// Compare `Expr` with other `Expr` on non-equality
     pub fn neq<E: Into<Expr>>(self, other: E) -> Expr {
         binary_expr(self, Operator::NotEq, other.into())
+    }
+
+    /// Compare `Expr` with other `Expr` on non-equality where `None == None`
+    pub fn neq_missing<E: Into<Expr>>(self, other: E) -> Expr {
+        binary_expr(self, Operator::NotEqValidity, other.into())
     }
 
     /// Check if `Expr` < `Expr`
@@ -995,9 +1020,10 @@ impl Expr {
         binary_expr(self, Operator::Or, expr.into())
     }
 
-    /// Filter a single column
-    /// Should be used in aggregation context. If you want to filter on a DataFrame level, use
-    /// [LazyFrame::filter](LazyFrame::filter)
+    /// Filter a single column.
+    ///
+    /// Should be used in aggregation context. If you want to filter on a
+    /// DataFrame level, use `LazyFrame::filter`.
     pub fn filter<E: Into<Expr>>(self, predicate: E) -> Self {
         if has_expr(&self, |e| matches!(e, Expr::Wildcard)) {
             panic!("filter '*' not allowed, use LazyFrame::filter")
@@ -1055,7 +1081,7 @@ impl Expr {
             let by = &s[1];
             let s = &s[0];
             let by = by.cast(&IDX_DTYPE)?;
-            Ok(Some(s.repeat_by(by.idx()?).into_series()))
+            Ok(Some(s.repeat_by(by.idx()?)?.into_series()))
         };
 
         self.apply_many(
@@ -1230,6 +1256,7 @@ impl Expr {
                         tu: Some(tu),
                         tz: tz.as_ref(),
                         closed_window: options.closed_window,
+                        fn_params: options.fn_params.clone(),
                     };
 
                     rolling_fn(s, options).map(Some)
@@ -1251,8 +1278,9 @@ impl Expr {
         }
     }
 
-    /// Apply a rolling min See:
-    /// [ChunkedArray::rolling_min]
+    /// Apply a rolling minimum.
+    ///
+    /// See: [`RollingAgg::rolling_min`]
     #[cfg(feature = "rolling_window")]
     pub fn rolling_min(self, options: RollingOptions) -> Expr {
         self.finish_rolling(
@@ -1264,8 +1292,9 @@ impl Expr {
         )
     }
 
-    /// Apply a rolling max See:
-    /// [ChunkedArray::rolling_max]
+    /// Apply a rolling maximum.
+    ///
+    /// See: [`RollingAgg::rolling_max`]
     #[cfg(feature = "rolling_window")]
     pub fn rolling_max(self, options: RollingOptions) -> Expr {
         self.finish_rolling(
@@ -1277,8 +1306,9 @@ impl Expr {
         )
     }
 
-    /// Apply a rolling mean See:
-    /// [ChunkedArray::rolling_mean]
+    /// Apply a rolling mean.
+    ///
+    /// See: [`RollingAgg::rolling_mean`]
     #[cfg(feature = "rolling_window")]
     pub fn rolling_mean(self, options: RollingOptions) -> Expr {
         self.finish_rolling(
@@ -1290,8 +1320,9 @@ impl Expr {
         )
     }
 
-    /// Apply a rolling sum See:
-    /// [ChunkedArray::rolling_sum]
+    /// Apply a rolling sum.
+    ///
+    /// See: [`RollingAgg::rolling_sum`]
     #[cfg(feature = "rolling_window")]
     pub fn rolling_sum(self, options: RollingOptions) -> Expr {
         self.finish_rolling(
@@ -1303,8 +1334,9 @@ impl Expr {
         )
     }
 
-    /// Apply a rolling median See:
-    /// [`ChunkedArray::rolling_median`]
+    /// Apply a rolling median.
+    ///
+    /// See: [`RollingAgg::rolling_median`]
     #[cfg(feature = "rolling_window")]
     pub fn rolling_median(self, options: RollingOptions) -> Expr {
         self.finish_rolling(
@@ -1316,8 +1348,9 @@ impl Expr {
         )
     }
 
-    /// Apply a rolling quantile See:
-    /// [`ChunkedArray::rolling_quantile`]
+    /// Apply a rolling quantile.
+    ///
+    /// See: [`RollingAgg::rolling_quantile`]
     #[cfg(feature = "rolling_window")]
     pub fn rolling_quantile(
         self,
@@ -1431,6 +1464,31 @@ impl Expr {
         .with_fmt("rank")
     }
 
+    #[cfg(feature = "cutqcut")]
+    pub fn cut(self, breaks: Vec<f64>, labels: Option<Vec<String>>, left_closed: bool) -> Expr {
+        self.apply_private(FunctionExpr::Cut {
+            breaks,
+            labels,
+            left_closed,
+        })
+    }
+
+    #[cfg(feature = "cutqcut")]
+    pub fn qcut(
+        self,
+        probs: Vec<f64>,
+        labels: Option<Vec<String>>,
+        left_closed: bool,
+        allow_duplicates: bool,
+    ) -> Expr {
+        self.apply_private(FunctionExpr::QCut {
+            probs,
+            labels,
+            left_closed,
+            allow_duplicates,
+        })
+    }
+
     #[cfg(feature = "diff")]
     pub fn diff(self, n: i64, null_behavior: NullBehavior) -> Expr {
         self.apply_private(FunctionExpr::Diff(n, null_behavior))
@@ -1526,45 +1584,6 @@ impl Expr {
         };
         self.apply(move |s| s.reshape(&dims).map(Some), output_type)
             .with_fmt("reshape")
-    }
-
-    #[cfg(feature = "random")]
-    pub fn shuffle(self, seed: Option<u64>) -> Self {
-        self.apply(move |s| Ok(Some(s.shuffle(seed))), GetOutput::same_type())
-            .with_fmt("shuffle")
-    }
-
-    #[cfg(feature = "random")]
-    pub fn sample_n(
-        self,
-        n: usize,
-        with_replacement: bool,
-        shuffle: bool,
-        seed: Option<u64>,
-    ) -> Self {
-        self.apply(
-            move |s| s.sample_n(n, with_replacement, shuffle, seed).map(Some),
-            GetOutput::same_type(),
-        )
-        .with_fmt("sample_n")
-    }
-
-    #[cfg(feature = "random")]
-    pub fn sample_frac(
-        self,
-        frac: f64,
-        with_replacement: bool,
-        shuffle: bool,
-        seed: Option<u64>,
-    ) -> Self {
-        self.apply(
-            move |s| {
-                s.sample_frac(frac, with_replacement, shuffle, seed)
-                    .map(Some)
-            },
-            GetOutput::same_type(),
-        )
-        .with_fmt("sample_frac")
     }
 
     #[cfg(feature = "ewma")]
@@ -1738,6 +1757,10 @@ impl Expr {
         self.map_private(FunctionExpr::Hash(k0, k1, k2, k3))
     }
 
+    pub fn to_physical(self) -> Expr {
+        self.map_private(FunctionExpr::ToPhysical)
+    }
+
     #[cfg(feature = "strings")]
     pub fn str(self) -> string::StringNameSpace {
         string::StringNameSpace(self)
@@ -1756,16 +1779,25 @@ impl Expr {
         list::ListNameSpace(self)
     }
 
+    /// Get the [`array::ArrayNameSpace`]
+    #[cfg(feature = "dtype-array")]
+    pub fn arr(self) -> array::ArrayNameSpace {
+        array::ArrayNameSpace(self)
+    }
+
+    /// Get the [`CategoricalNameSpace`]
     #[cfg(feature = "dtype-categorical")]
     pub fn cat(self) -> cat::CategoricalNameSpace {
         cat::CategoricalNameSpace(self)
     }
 
+    /// Get the [`struct_::StructNameSpace`]
     #[cfg(feature = "dtype-struct")]
     pub fn struct_(self) -> struct_::StructNameSpace {
         struct_::StructNameSpace(self)
     }
 
+    /// Get the [`meta::MetaNameSpace`]
     #[cfg(feature = "meta")]
     pub fn meta(self) -> meta::MetaNameSpace {
         meta::MetaNameSpace(self)

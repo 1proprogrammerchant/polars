@@ -10,6 +10,7 @@ try:
         SchemaError,
         SchemaFieldNotFoundError,
         ShapeError,
+        StringCacheMismatchError,
         StructFieldNotFoundError,
     )
 except ImportError:
@@ -43,6 +44,9 @@ except ImportError:
     class ShapeError(Exception):  # type: ignore[no-redef]
         """Exception raised when trying to combine data structures with incompatible shapes."""  # noqa: W505
 
+    class StringCacheMismatchError(Exception):  # type: ignore[no-redef]
+        """Exception raised when string caches come from different sources."""
+
     class StructFieldNotFoundError(Exception):  # type: ignore[no-redef]
         """Exception raised when a specified schema field is not found."""
 
@@ -67,11 +71,7 @@ class TooManyRowsReturnedError(RowsError):
 
 
 class TimeZoneAwareConstructorWarning(Warning):
-    """
-    Warning raised when constructing a Series from time-zone-aware datetimes.
-
-    In a future version of polars, these will be converted to UTC.
-    """
+    """Warning raised when constructing Series from non-UTC time-zone-aware inputs."""
 
 
 class ChronoFormatWarning(Warning):
@@ -100,6 +100,7 @@ __all__ = [
     "SchemaError",
     "SchemaFieldNotFoundError",
     "ShapeError",
+    "StringCacheMismatchError",
     "StructFieldNotFoundError",
     "TooManyRowsReturnedError",
 ]

@@ -4,9 +4,13 @@ import os
 with contextlib.suppress(ImportError):  # Module not available when building docs
     # ensure the object constructor is known by polars
     # we set this once on import
-    from polars.polars import register_object_builder
 
-    register_object_builder()
+    # we also set other function pointers needed
+    # on the rust side. This function is highly
+    # unsafe and should only be called once.
+    from polars.polars import __register_startup_deps
+
+    __register_startup_deps()
 
 from polars import api
 from polars.config import Config
@@ -93,7 +97,9 @@ from polars.functions import (
     cumfold,
     cumreduce,
     cumsum,
+    date,
     date_range,
+    datetime,
     duration,
     element,
     exclude,
@@ -104,6 +110,8 @@ from polars.functions import (
     groups,
     head,
     implode,
+    int_range,
+    int_ranges,
     last,
     lit,
     map,
@@ -119,18 +127,17 @@ from polars.functions import (
     rolling_corr,
     rolling_cov,
     select,
+    sql_expr,
     std,
     struct,
     sum,
     tail,
+    time,
     time_range,
     var,
+    when,
     zeros,
 )
-from polars.functions.lazy import date_ as date
-from polars.functions.lazy import datetime_ as datetime
-from polars.functions.lazy import time_ as time
-from polars.functions.whenthen import when
 from polars.io import (
     read_avro,
     read_csv,
@@ -303,6 +310,8 @@ __all__ = [
     "groups",
     "head",
     "implode",
+    "int_range",
+    "int_ranges",
     "last",
     "lit",
     "map",
@@ -340,6 +349,9 @@ __all__ = [
     "get_index_type",
     "show_versions",
     "threadpool_size",
+    # selectors
+    "selectors",
+    "sql_expr",
 ]
 
 os.environ["POLARS_ALLOW_EXTENSION"] = "true"

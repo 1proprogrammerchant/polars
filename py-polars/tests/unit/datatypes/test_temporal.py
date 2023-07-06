@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import contextlib
 import io
 from datetime import date, datetime, time, timedelta, timezone
-from typing import TYPE_CHECKING, Any, cast, no_type_check
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 import pandas as pd
@@ -11,11 +12,7 @@ import pytest
 
 import polars as pl
 from polars.datatypes import DATETIME_DTYPES, DTYPE_TEMPORAL_UNITS, TEMPORAL_DTYPES
-from polars.exceptions import (
-    ArrowError,
-    ComputeError,
-    PolarsPanicError,
-)
+from polars.exceptions import ArrowError, ComputeError, TimeZoneAwareConstructorWarning
 from polars.testing import (
     assert_frame_equal,
     assert_series_equal,
@@ -181,7 +178,7 @@ def test_diff_datetime() -> None:
             pl.col("timestamp").str.strptime(pl.Date, format="%Y-%m-%d"),
         ).with_columns(pl.col("timestamp").diff().over("char", mapping_strategy="join"))
     )["timestamp"]
-    assert (out[0] == out[1]).all()
+    assert_series_equal(out[0], out[1])
 
 
 def test_from_pydatetime() -> None:
@@ -345,9 +342,12 @@ def test_datetime_consistency() -> None:
         datetime(3099, 12, 31, 23, 59, 59, 123456, tzinfo=ZoneInfo("Asia/Kathmandu")),
         datetime(9999, 12, 31, 23, 59, 59, 999999, tzinfo=ZoneInfo("Asia/Kathmandu")),
     ]
-    ddf = pl.DataFrame({"dtm": test_data}).with_columns(
-        pl.col("dtm").dt.nanosecond().alias("ns")
-    )
+    with pytest.warns(
+        TimeZoneAwareConstructorWarning, match="Series with UTC time zone"
+    ):
+        ddf = pl.DataFrame({"dtm": test_data}).with_columns(
+            pl.col("dtm").dt.nanosecond().alias("ns")
+        )
     assert ddf.rows() == [
         (test_data[0], 555555000),
         (test_data[1], 986754000),
@@ -361,9 +361,12 @@ def test_datetime_consistency() -> None:
         datetime(2021, 11, 7, 1, 0, fold=1, tzinfo=ZoneInfo("US/Central")),
         datetime(2021, 11, 7, 2, 0, tzinfo=ZoneInfo("US/Central")),
     ]
-    ddf = pl.DataFrame({"dtm": test_data}).select(
-        pl.col("dtm").dt.convert_time_zone("US/Central")
-    )
+    with pytest.warns(
+        TimeZoneAwareConstructorWarning, match="Series with UTC time zone"
+    ):
+        ddf = pl.DataFrame({"dtm": test_data}).select(
+            pl.col("dtm").dt.convert_time_zone("US/Central")
+        )
     assert ddf.rows() == [
         (test_data[0],),
         (test_data[1],),
@@ -464,330 +467,6 @@ def test_series_to_numpy() -> None:
     s4 = pl.Series([time(10, 30, 45), time(23, 59, 59)])
     out = np.array([time(10, 30, 45), time(23, 59, 59)], dtype="object")
     assert (s4.to_numpy() == out).all()
-
-
-def test_date_range() -> None:
-    result = pl.date_range(
-        date(1985, 1, 1), date(2015, 7, 1), timedelta(days=1, hours=12), eager=True
-    )
-    assert len(result) == 7426
-    assert result.dt[0] == datetime(1985, 1, 1)
-    assert result.dt[1] == datetime(1985, 1, 2, 12, 0)
-    assert result.dt[2] == datetime(1985, 1, 4, 0, 0)
-    assert result.dt[-1] == datetime(2015, 6, 30, 12, 0)
-
-    for time_unit in DTYPE_TEMPORAL_UNITS:
-        rng = pl.date_range(
-            datetime(2020, 1, 1),
-            date(2020, 1, 2),
-            "2h",
-            time_unit=time_unit,
-            eager=True,
-        )
-        with pytest.warns(
-            DeprecationWarning, match="`Series.time_unit` is deprecated.*"
-        ):
-            assert rng.time_unit == time_unit
-        assert rng.shape == (13,)
-        assert rng.dt[0] == datetime(2020, 1, 1)
-        assert rng.dt[-1] == datetime(2020, 1, 2)
-
-    # if low/high are both date, range is also be date _iif_ the granularity is >= 1d
-    result = pl.date_range(
-        date(2022, 1, 1), date(2022, 3, 1), "1mo", name="drange", eager=True
-    )
-    assert result.to_list() == [date(2022, 1, 1), date(2022, 2, 1), date(2022, 3, 1)]
-    assert result.name == "drange"
-
-    result = pl.date_range(date(2022, 1, 1), date(2022, 1, 2), "1h30m", eager=True)
-    assert list(result) == [
-        datetime(2022, 1, 1, 0, 0),
-        datetime(2022, 1, 1, 1, 30),
-        datetime(2022, 1, 1, 3, 0),
-        datetime(2022, 1, 1, 4, 30),
-        datetime(2022, 1, 1, 6, 0),
-        datetime(2022, 1, 1, 7, 30),
-        datetime(2022, 1, 1, 9, 0),
-        datetime(2022, 1, 1, 10, 30),
-        datetime(2022, 1, 1, 12, 0),
-        datetime(2022, 1, 1, 13, 30),
-        datetime(2022, 1, 1, 15, 0),
-        datetime(2022, 1, 1, 16, 30),
-        datetime(2022, 1, 1, 18, 0),
-        datetime(2022, 1, 1, 19, 30),
-        datetime(2022, 1, 1, 21, 0),
-        datetime(2022, 1, 1, 22, 30),
-        datetime(2022, 1, 2, 0, 0),
-    ]
-
-    result = pl.date_range(
-        datetime(2022, 1, 1), datetime(2022, 1, 1, 0, 1), "987456321ns", eager=True
-    )
-    assert len(result) == 61
-    assert result.dtype.time_unit == "ns"  # type: ignore[union-attr]
-    assert result.dt.second()[-1] == 59
-    assert result.cast(pl.Utf8)[-1] == "2022-01-01 00:00:59.247379260"
-
-
-@pytest.mark.parametrize(
-    ("time_unit", "expected_micros"),
-    [
-        ("ms", 986000),
-        ("us", 986759),
-        ("ns", 986759),
-        (None, 986759),
-    ],
-)
-def test_date_range_precision(time_unit: TimeUnit | None, expected_micros: int) -> None:
-    micros = 986759
-    start = datetime(2000, 5, 30, 1, 53, 4, micros)
-    stop = datetime(2000, 5, 31, 1, 53, 4, micros)
-    result = pl.date_range(start, stop, time_unit=time_unit, eager=True)
-    expected_start = start.replace(microsecond=expected_micros)
-    expected_stop = stop.replace(microsecond=expected_micros)
-    assert result[0] == expected_start
-    assert result[1] == expected_stop
-
-
-def test_range_invalid_unit() -> None:
-    with pytest.raises(PolarsPanicError, match="'D' not supported"):
-        pl.date_range(
-            start=datetime(2021, 12, 16),
-            end=datetime(2021, 12, 16, 3),
-            interval="1D",
-            eager=True,
-        )
-
-
-def test_date_range_lazy_with_literals() -> None:
-    df = pl.DataFrame({"misc": ["x"]}).with_columns(
-        pl.date_range(
-            date(2000, 1, 1),
-            date(2023, 8, 31),
-            interval="987d",
-            eager=False,
-        ).alias("dts")
-    )
-    assert df.rows() == [
-        (
-            "x",
-            [
-                date(2000, 1, 1),
-                date(2002, 9, 14),
-                date(2005, 5, 28),
-                date(2008, 2, 9),
-                date(2010, 10, 23),
-                date(2013, 7, 6),
-                date(2016, 3, 19),
-                date(2018, 12, 1),
-                date(2021, 8, 14),
-            ],
-        )
-    ]
-    assert (
-        df.rows()[0][1]
-        == pd.date_range(
-            date(2000, 1, 1), date(2023, 12, 31), freq="987d"
-        ).date.tolist()
-    )
-
-
-@pytest.mark.parametrize("low", ["start", pl.col("start")])
-@pytest.mark.parametrize("high", ["stop", pl.col("stop")])
-def test_date_range_lazy_with_expressions(
-    low: str | pl.Expr, high: str | pl.Expr
-) -> None:
-    ldf = (
-        pl.DataFrame({"start": [date(2015, 6, 30)], "stop": [date(2022, 12, 31)]})
-        .with_columns(
-            pl.date_range(low, high, interval="678d", eager=False).alias("dts")
-        )
-        .lazy()
-    )
-
-    assert ldf.collect().rows() == [
-        (
-            date(2015, 6, 30),
-            date(2022, 12, 31),
-            [
-                date(2015, 6, 30),
-                date(2017, 5, 8),
-                date(2019, 3, 17),
-                date(2021, 1, 23),
-                date(2022, 12, 2),
-            ],
-        )
-    ]
-
-    assert pl.DataFrame(
-        {
-            "start": [date(2000, 1, 1), date(2022, 6, 1)],
-            "stop": [date(2000, 1, 2), date(2022, 6, 2)],
-        }
-    ).with_columns(
-        pl.date_range(
-            low,
-            high,
-            interval="1d",
-            eager=True,
-        ).alias("dts")
-    ).to_dict(
-        False
-    ) == {
-        "start": [date(2000, 1, 1), date(2022, 6, 1)],
-        "stop": [date(2000, 1, 2), date(2022, 6, 2)],
-        "dts": [
-            [date(2000, 1, 1), date(2000, 1, 2)],
-            [date(2022, 6, 1), date(2022, 6, 2)],
-        ],
-    }
-
-    assert pl.DataFrame(
-        {
-            "start": [datetime(2000, 1, 1), datetime(2022, 6, 1)],
-            "stop": [datetime(2000, 1, 2), datetime(2022, 6, 2)],
-        }
-    ).with_columns(
-        pl.date_range(
-            low,
-            high,
-            interval="1d",
-            eager=True,
-        ).alias("dts")
-    ).to_dict(
-        False
-    ) == {
-        "start": [datetime(2000, 1, 1, 0, 0), datetime(2022, 6, 1, 0, 0)],
-        "stop": [datetime(2000, 1, 2, 0, 0), datetime(2022, 6, 2, 0, 0)],
-        "dts": [
-            [datetime(2000, 1, 1, 0, 0), datetime(2000, 1, 2, 0, 0)],
-            [datetime(2022, 6, 1, 0, 0), datetime(2022, 6, 2, 0, 0)],
-        ],
-    }
-
-
-def test_date_range_single_row_lazy_7110() -> None:
-    df = pl.DataFrame(
-        {
-            "name": ["A"],
-            "from": [date(2020, 1, 1)],
-            "to": [date(2020, 1, 2)],
-        }
-    )
-    result = df.with_columns(
-        pl.date_range(
-            start=pl.col("from"),
-            end=pl.col("to"),
-            interval="1d",
-            eager=False,
-        ).alias("date_range")
-    )
-    expected = pl.DataFrame(
-        {
-            "name": ["A"],
-            "from": [date(2020, 1, 1)],
-            "to": [date(2020, 1, 2)],
-            "date_range": [[date(2020, 1, 1), date(2020, 1, 2)]],
-        }
-    )
-    assert_frame_equal(result, expected)
-
-
-def test_date_range_invalid_time_zone() -> None:
-    with pytest.raises(
-        ComputeError, match="unable to parse time zone: 'foo'"
-    ), pytest.warns(
-        DeprecationWarning,
-        match="time zones other than those in `zoneinfo.available_timezones",
-    ):
-        pl.date_range(
-            datetime(2001, 1, 1),
-            datetime(2001, 1, 3),
-            interval="1d",
-            time_zone="foo",
-            eager=True,
-        )
-
-
-def test_time_range_lit() -> None:
-    for eager in (True, False):
-        tm = pl.select(
-            pl.time_range(
-                start=time(1, 2, 3),
-                end=time(23, 59, 59),
-                interval="5h45m10s333ms",
-                closed="right",
-                eager=eager,
-                name="tm",
-            )
-        )
-        if not eager:
-            tm = tm.select(pl.col("tm").explode())
-        assert tm["tm"].to_list() == [
-            time(6, 47, 13, 333000),
-            time(12, 32, 23, 666000),
-            time(18, 17, 33, 999000),
-        ]
-
-        # validate unset start/end
-        tm = pl.select(
-            pl.time_range(
-                interval="5h45m10s333ms",
-                eager=eager,
-                name="tm",
-            )
-        )
-        if not eager:
-            tm = tm.select(pl.col("tm").explode())
-        assert tm["tm"].to_list() == [
-            time(0, 0),
-            time(5, 45, 10, 333000),
-            time(11, 30, 20, 666000),
-            time(17, 15, 30, 999000),
-            time(23, 0, 41, 332000),
-        ]
-
-        tm = pl.select(
-            pl.time_range(
-                start=pl.lit(time(23, 59, 59, 999980)),
-                interval="10000ns",
-                eager=eager,
-                name="tm",
-            )
-        )
-        tm = tm.select(pl.col("tm").explode())
-        assert tm["tm"].to_list() == [
-            time(23, 59, 59, 999980),
-            time(23, 59, 59, 999990),
-        ]
-
-
-def test_time_range_expr() -> None:
-    df = pl.DataFrame(
-        {
-            "start": pl.time_range(interval="6h", eager=True),
-            "stop": pl.time_range(start=time(2, 59), interval="5h59m", eager=True),
-        }
-    ).with_columns(
-        intervals=pl.time_range("start", pl.col("stop"), interval="1h29m", eager=False)
-    )
-    # shape: (4, 3)
-    # ┌──────────┬──────────┬────────────────────────────────┐
-    # │ start    ┆ stop     ┆ intervals                      │
-    # │ ---      ┆ ---      ┆ ---                            │
-    # │ time     ┆ time     ┆ list[time]                     │
-    # ╞══════════╪══════════╪════════════════════════════════╡
-    # │ 00:00:00 ┆ 02:59:00 ┆ [00:00:00, 01:29:00, 02:58:00] │
-    # │ 06:00:00 ┆ 08:58:00 ┆ [06:00:00, 07:29:00, 08:58:00] │
-    # │ 12:00:00 ┆ 14:57:00 ┆ [12:00:00, 13:29:00]           │
-    # │ 18:00:00 ┆ 20:56:00 ┆ [18:00:00, 19:29:00]           │
-    # └──────────┴──────────┴────────────────────────────────┘
-    assert df.rows() == [
-        (time(0, 0), time(2, 59), [time(0, 0), time(1, 29), time(2, 58)]),
-        (time(6, 0), time(8, 58), [time(6, 0), time(7, 29), time(8, 58)]),
-        (time(12, 0), time(14, 57), [time(12, 0), time(13, 29)]),
-        (time(18, 0), time(20, 56), [time(18, 0), time(19, 29)]),
-    ]
 
 
 @pytest.mark.parametrize(
@@ -1222,7 +901,9 @@ def test_groupby_dynamic_crossing_dst(rule: str, offset: timedelta) -> None:
         start_dt, end_dt, rule, time_zone="US/Central", eager=True
     )
     df = pl.DataFrame({"time": date_range, "value": range(len(date_range))})
-    result = df.groupby_dynamic("time", every=rule).agg(pl.col("value").mean())
+    result = df.groupby_dynamic("time", every=rule, start_by="datapoint").agg(
+        pl.col("value").mean()
+    )
     expected = pl.DataFrame(
         {"time": date_range, "value": range(len(date_range))},
         schema_overrides={"value": pl.Float64},
@@ -1344,6 +1025,14 @@ def test_groupby_dynamic_monthly_crossing_dst() -> None:
         {"time": date_range, "value": range(len(date_range))},
         schema_overrides={"value": pl.Float64},
     )
+    assert_frame_equal(result, expected)
+
+
+def test_groupby_dynamic_2d_9333() -> None:
+    df = pl.DataFrame({"ts": [datetime(2000, 1, 1, 3)], "values": [10.0]})
+    df = df.with_columns(pl.col("ts").set_sorted())
+    result = df.groupby_dynamic("ts", every="2d").agg(pl.col("values"))
+    expected = pl.DataFrame({"ts": [datetime(1999, 12, 31, 0)], "values": [[10.0]]})
     assert_frame_equal(result, expected)
 
 
@@ -1641,6 +1330,29 @@ def test_asof_join() -> None:
         "bid_right"
     ].to_list() == [51.95, 51.95, None, None, 720.77, None, None, None]
 
+    assert trades.join_asof(quotes, on="dates", strategy="nearest")[
+        "bid_right"
+    ].to_list() == [51.95, 51.99, 720.5, 720.5, 720.5]
+    assert quotes.join_asof(trades, on="dates", strategy="nearest")[
+        "bid_right"
+    ].to_list() == [51.95, 51.95, 51.95, 51.95, 98.0, 98.0, 98.0, 98.0]
+
+    assert trades.sort(by=["ticker", "dates"]).join_asof(
+        quotes.sort(by=["ticker", "dates"]), on="dates", by="ticker", strategy="nearest"
+    )["bid_right"].to_list() == [97.99, 720.5, 720.5, 51.95, 51.99]
+    assert quotes.sort(by=["ticker", "dates"]).join_asof(
+        trades.sort(by=["ticker", "dates"]), on="dates", by="ticker", strategy="nearest"
+    )["bid_right"].to_list() == [
+        98.0,
+        720.92,
+        720.92,
+        720.92,
+        51.95,
+        51.95,
+        51.95,
+        51.95,
+    ]
+
 
 @pytest.mark.parametrize(
     ("skip_nulls", "expected_value"),
@@ -1749,16 +1461,17 @@ def test_agg_logical() -> None:
     assert s.min() == dates[0]
 
 
-@no_type_check
 def test_from_time_arrow() -> None:
     pa_times = pa.table([pa.array([10, 20, 30], type=pa.time32("s"))], names=["times"])
 
-    assert pl.from_arrow(pa_times).to_series().to_list() == [
+    result: pl.DataFrame = pl.from_arrow(pa_times)  # type: ignore[assignment]
+
+    assert result.to_series().to_list() == [
         time(0, 0, 10),
         time(0, 0, 20),
         time(0, 0, 30),
     ]
-    assert pl.from_arrow(pa_times).rows() == [
+    assert result.rows() == [
         (time(0, 0, 10),),
         (time(0, 0, 20),),
         (time(0, 0, 30),),
@@ -2208,16 +1921,11 @@ def test_strptime_empty(time_unit: TimeUnit, time_zone: str | None) -> None:
 
 
 def test_strptime_with_invalid_tz() -> None:
-    with pytest.raises(
-        ComputeError, match="unable to parse time zone: 'foo'"
-    ), pytest.warns(
-        FutureWarning,
-        match="time zones other than those in `zoneinfo.available_timezones",
-    ):
+    with pytest.raises(ComputeError, match="unable to parse time zone: 'foo'"):
         pl.Series(["2020-01-01 03:00:00"]).str.strptime(pl.Datetime("us", "foo"))
     with pytest.raises(
         ComputeError,
-        match="cannot use strptime with both a tz-aware format and a tz-aware dtype",
+        match="Please either drop the time zone from the function call, or set it to UTC",
     ):
         pl.Series(["2020-01-01 03:00:00+01:00"]).str.strptime(
             pl.Datetime("us", "foo"), "%Y-%m-%d %H:%M:%S%z"
@@ -2251,12 +1959,7 @@ def test_strptime_unguessable_format() -> None:
 
 def test_convert_time_zone_invalid() -> None:
     ts = pl.Series(["2020-01-01"]).str.strptime(pl.Datetime)
-    with pytest.raises(
-        ComputeError, match="unable to parse time zone: 'foo'"
-    ), pytest.warns(
-        FutureWarning,
-        match="time zones other than those in `zoneinfo.available_timezones",
-    ):
+    with pytest.raises(ComputeError, match="unable to parse time zone: 'foo'"):
         ts.dt.replace_time_zone("UTC").dt.convert_time_zone("foo")
 
 
@@ -2313,152 +2016,12 @@ def test_tz_datetime_duration_arithm_5221() -> None:
 
 def test_auto_infer_time_zone() -> None:
     dt = datetime(2022, 10, 17, 10, tzinfo=ZoneInfo("Asia/Shanghai"))
-    s = pl.Series([dt])
+    with pytest.warns(
+        TimeZoneAwareConstructorWarning, match="Series with UTC time zone"
+    ):
+        s = pl.Series([dt])
     assert s.dtype == pl.Datetime("us", "UTC")
     assert s[0] == dt
-
-
-def test_timezone_aware_date_range() -> None:
-    low = datetime(2022, 10, 17, 10, tzinfo=ZoneInfo("Asia/Shanghai"))
-    high = datetime(2022, 11, 17, 10, tzinfo=ZoneInfo("Asia/Shanghai"))
-
-    assert pl.date_range(
-        low, high, interval=timedelta(days=5), eager=True
-    ).to_list() == [
-        datetime(2022, 10, 17, 10, 0, tzinfo=ZoneInfo(key="Asia/Shanghai")),
-        datetime(2022, 10, 22, 10, 0, tzinfo=ZoneInfo(key="Asia/Shanghai")),
-        datetime(2022, 10, 27, 10, 0, tzinfo=ZoneInfo(key="Asia/Shanghai")),
-        datetime(2022, 11, 1, 10, 0, tzinfo=ZoneInfo(key="Asia/Shanghai")),
-        datetime(2022, 11, 6, 10, 0, tzinfo=ZoneInfo(key="Asia/Shanghai")),
-        datetime(2022, 11, 11, 10, 0, tzinfo=ZoneInfo(key="Asia/Shanghai")),
-        datetime(2022, 11, 16, 10, 0, tzinfo=ZoneInfo(key="Asia/Shanghai")),
-    ]
-
-    with pytest.raises(
-        ValueError,
-        match="Cannot mix different timezone aware datetimes. "
-        "Got: 'Asia/Shanghai' and 'None'",
-    ):
-        pl.date_range(
-            low,
-            high.replace(tzinfo=None),
-            interval=timedelta(days=5),
-            time_zone="UTC",
-            eager=True,
-        )
-
-    with pytest.raises(
-        ValueError,
-        match="Given time_zone is different from that of timezone aware datetimes. "
-        "Given: 'UTC', got: 'Asia/Shanghai'.",
-    ):
-        pl.date_range(
-            low, high, interval=timedelta(days=5), time_zone="UTC", eager=True
-        )
-
-
-def test_tzaware_date_range_crossing_dst_hourly() -> None:
-    result = pl.date_range(
-        datetime(2021, 11, 7),
-        datetime(2021, 11, 7, 2),
-        "1h",
-        time_zone="US/Central",
-        eager=True,
-    )
-    assert result.to_list() == [
-        datetime(2021, 11, 7, 0, 0, tzinfo=ZoneInfo("US/Central")),
-        datetime(2021, 11, 7, 1, 0, tzinfo=ZoneInfo("US/Central")),
-        datetime(2021, 11, 7, 1, 0, fold=1, tzinfo=ZoneInfo("US/Central")),
-        datetime(2021, 11, 7, 2, 0, tzinfo=ZoneInfo("US/Central")),
-    ]
-
-
-def test_tzaware_date_range_crossing_dst_daily() -> None:
-    result = pl.date_range(
-        datetime(2021, 11, 7),
-        datetime(2021, 11, 11),
-        "2d",
-        time_zone="US/Central",
-        eager=True,
-    )
-    assert result.to_list() == [
-        datetime(2021, 11, 7, 0, 0, tzinfo=ZoneInfo("US/Central")),
-        datetime(2021, 11, 9, 0, 0, tzinfo=ZoneInfo("US/Central")),
-        datetime(2021, 11, 11, 0, 0, tzinfo=ZoneInfo("US/Central")),
-    ]
-
-
-def test_tzaware_date_range_crossing_dst_weekly() -> None:
-    result = pl.date_range(
-        datetime(2021, 11, 7),
-        datetime(2021, 11, 20),
-        "1w",
-        time_zone="US/Central",
-        eager=True,
-    )
-    assert result.to_list() == [
-        datetime(2021, 11, 7, 0, 0, tzinfo=ZoneInfo("US/Central")),
-        datetime(2021, 11, 14, 0, 0, tzinfo=ZoneInfo("US/Central")),
-    ]
-
-
-def test_tzaware_date_range_crossing_dst_monthly() -> None:
-    result = pl.date_range(
-        datetime(2021, 11, 7),
-        datetime(2021, 12, 20),
-        "1mo",
-        time_zone="US/Central",
-        eager=True,
-    )
-    assert result.to_list() == [
-        datetime(2021, 11, 7, 0, 0, tzinfo=ZoneInfo("US/Central")),
-        datetime(2021, 12, 7, 0, 0, tzinfo=ZoneInfo("US/Central")),
-    ]
-
-
-def test_date_range_with_unsupported_datetimes() -> None:
-    with pytest.raises(
-        ComputeError,
-        match=r"datetime '2021-11-07 01:00:00' is ambiguous in time zone 'US/Central'",
-    ):
-        pl.date_range(
-            datetime(2021, 11, 7, 1),
-            datetime(2021, 11, 7, 2),
-            "1h",
-            time_zone="US/Central",
-            eager=True,
-        )
-    with pytest.raises(
-        ComputeError,
-        match=r"datetime '2021-03-28 02:30:00' is non-existent in time zone 'Europe/Vienna'",
-    ):
-        pl.date_range(
-            datetime(2021, 3, 28, 2, 30),
-            datetime(2021, 3, 28, 4),
-            "1h",
-            time_zone="Europe/Vienna",
-            eager=True,
-        )
-
-
-def test_date_range_descending() -> None:
-    with pytest.raises(ComputeError, match="'start' cannot be greater than 'stop'"):
-        pl.date_range(
-            datetime(2000, 3, 20), datetime(2000, 3, 5), interval="1h", eager=True
-        )
-    with pytest.raises(ComputeError, match="'interval' cannot be negative"):
-        pl.date_range(
-            datetime(2000, 3, 20), datetime(2000, 3, 21), interval="-1h", eager=True
-        )
-
-
-def test_date_range_end_of_month_5441() -> None:
-    start = date(2020, 1, 31)
-    stop = date(2021, 1, 31)
-    with pytest.raises(
-        ComputeError, match=r"cannot advance '2020-01-31 00:00:00' by 1 month\(s\)"
-    ):
-        pl.date_range(start, stop, interval="1mo", eager=True)
 
 
 def test_logical_nested_take() -> None:
@@ -2763,7 +2326,8 @@ def test_truncate_by_calendar_weeks() -> None:
     end = datetime(2022, 11, 20, 0, 0, 0)
 
     assert (
-        pl.date_range(start, end, timedelta(days=1), name="date", eager=True)
+        pl.date_range(start, end, timedelta(days=1), eager=True)
+        .alias("date")
         .to_frame()
         .select([pl.col("date").dt.truncate("1w")])
     ).to_dict(False) == {
@@ -3096,18 +2660,28 @@ def test_series_is_temporal() -> None:
     ],
 )
 def test_misc_precision_any_value_conversion(time_zone: Any, warn: bool) -> None:
+    context_manager: contextlib.AbstractContextManager[pytest.WarningsRecorder | None]
+    msg = r"UTC time zone"
+    if warn:
+        context_manager = pytest.warns(TimeZoneAwareConstructorWarning, match=msg)
+    else:
+        context_manager = contextlib.nullcontext()
+
     tz = ZoneInfo(time_zone) if isinstance(time_zone, str) else time_zone
     # default precision (μs)
     dt = datetime(2514, 5, 30, 1, 53, 4, 986754, tzinfo=tz)
-    assert pl.Series([dt]).to_list() == [dt]
+    with context_manager:
+        assert pl.Series([dt]).to_list() == [dt]
 
     # ms precision
     dt = datetime(2243, 1, 1, 0, 0, 0, 1000, tzinfo=tz)
-    assert pl.Series([dt]).cast(pl.Datetime("ms", time_zone)).to_list() == [dt]
+    with context_manager:
+        assert pl.Series([dt]).cast(pl.Datetime("ms", time_zone)).to_list() == [dt]
 
     # ns precision
     dt = datetime(2256, 1, 1, 0, 0, 0, 1, tzinfo=tz)
-    assert pl.Series([dt]).cast(pl.Datetime("ns", time_zone)).to_list() == [dt]
+    with context_manager:
+        assert pl.Series([dt]).cast(pl.Datetime("ns", time_zone)).to_list() == [dt]
 
 
 @pytest.mark.parametrize(
@@ -3122,3 +2696,45 @@ def test_misc_precision_any_value_conversion(time_zone: Any, warn: bool) -> None
 def test_pytime_conversion(tm: time) -> None:
     s = pl.Series("tm", [tm])
     assert s.to_list() == [tm]
+
+
+@pytest.mark.parametrize(
+    ("input_df", "expected_grouped_df"),
+    [
+        (
+            (
+                pl.DataFrame(
+                    {
+                        "dt": [
+                            datetime(2021, 12, 31, 0, 0, 0),
+                            datetime(2022, 1, 1, 0, 0, 1),
+                            datetime(2022, 3, 31, 0, 0, 1),
+                            datetime(2022, 4, 1, 0, 0, 1),
+                        ]
+                    }
+                )
+            ),
+            pl.DataFrame(
+                {
+                    "dt": [
+                        datetime(2021, 10, 1),
+                        datetime(2022, 1, 1),
+                        datetime(2022, 4, 1),
+                    ],
+                    "num_points": [1, 2, 1],
+                },
+                schema={"dt": pl.Datetime, "num_points": pl.UInt32},
+            ).sort("dt"),
+        )
+    ],
+)
+def test_groupby_dynamic(
+    input_df: pl.DataFrame, expected_grouped_df: pl.DataFrame
+) -> None:
+    result = (
+        input_df.sort("dt")
+        .groupby_dynamic("dt", every="1q")
+        .agg(pl.col("dt").count().alias("num_points"))
+        .sort("dt")
+    )
+    assert_frame_equal(result, expected_grouped_df)

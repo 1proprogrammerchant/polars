@@ -1,4 +1,6 @@
-import typing
+from __future__ import annotations
+
+from typing import Any
 
 import pytest
 
@@ -414,37 +416,40 @@ def test_absence_off_null_prop_8224() -> None:
     ]
 
 
-@typing.no_type_check
-def test_schemas() -> None:
-    # add all expression output tests here:
-    args = [
-        # coalesce
-        {
-            "data": {"x": ["x"], "y": ["y"]},
-            "expr": pl.coalesce(pl.col("x"), pl.col("y")),
-            "expected_select": {"x": pl.Utf8},
-            "expected_gb": {"x": pl.List(pl.Utf8)},
-        },
-        # boolean sum
-        {
-            "data": {"x": [True]},
-            "expr": pl.col("x").sum(),
-            "expected_select": {"x": pl.UInt32},
-            "expected_gb": {"x": pl.UInt32},
-        },
-    ]
-    for arg in args:
-        df = pl.DataFrame(arg["data"])
+@pytest.mark.parametrize(
+    ("data", "expr", "expected_select", "expected_gb"),
+    [
+        (
+            {"x": ["x"], "y": ["y"]},
+            pl.coalesce(pl.col("x"), pl.col("y")),
+            {"x": pl.Utf8},
+            {"x": pl.List(pl.Utf8)},
+        ),
+        (
+            {"x": [True]},
+            pl.col("x").sum(),
+            {"x": pl.UInt32},
+            {"x": pl.UInt32},
+        ),
+    ],
+)
+def test_schemas(
+    data: dict[str, list[Any]],
+    expr: pl.Expr,
+    expected_select: dict[str, pl.PolarsDataType],
+    expected_gb: dict[str, pl.PolarsDataType],
+) -> None:
+    df = pl.DataFrame(data)
 
-        # test selection schema
-        schema = df.select(arg["expr"]).schema
-        for key, dtype in arg["expected_select"].items():
-            assert schema[key] == dtype
+    # test selection schema
+    schema = df.select(expr).schema
+    for key, dtype in expected_select.items():
+        assert schema[key] == dtype
 
-        # test groupby schema
-        schema = df.groupby(pl.lit(1)).agg(arg["expr"]).schema
-        for key, dtype in arg["expected_gb"].items():
-            assert schema[key] == dtype
+    # test groupby schema
+    schema = df.groupby(pl.lit(1)).agg(expr).schema
+    for key, dtype in expected_gb.items():
+        assert schema[key] == dtype
 
 
 def test_list_null_constructor_schema() -> None:
@@ -453,3 +458,34 @@ def test_list_null_constructor_schema() -> None:
     assert pl.Series([[]], dtype=pl.List).dtype == expected
     assert pl.DataFrame({"a": [[]]}).dtypes[0] == expected
     assert pl.DataFrame(schema={"a": pl.List}).dtypes[0] == expected
+
+
+def test_schema_ne_missing_9256() -> None:
+    df = pl.DataFrame({"a": [0, 1, None], "b": [True, False, True]})
+
+    assert df.select(pl.col("a").ne_missing(0).or_(pl.col("b")))["a"].all()
+
+
+def test_concat_vertically_relaxed() -> None:
+    a = pl.DataFrame(
+        {
+            "a": [1, 2, 3],
+            "b": [True, False, None],
+        },
+        schema={"a": pl.Int8, "b": pl.Boolean},
+    )
+
+    b = pl.DataFrame(
+        {
+            "a": [43, 2, 3],
+            "b": [32, 1, None],
+        },
+        schema={"a": pl.Int16, "b": pl.Int64},
+    )
+
+    out = pl.concat([a, b], how="vertical_relaxed")
+    assert out.schema == {"a": pl.Int16, "b": pl.Int64}
+    assert out.to_dict(False) == {
+        "a": [1, 2, 3, 43, 2, 3],
+        "b": [1, 0, None, 32, 1, None],
+    }

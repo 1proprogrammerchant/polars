@@ -422,6 +422,7 @@ pub fn create_physical_plan(
                     options,
                     input_schema,
                     slice: _slice,
+                    apply,
                 }));
             }
 
@@ -435,6 +436,7 @@ pub fn create_physical_plan(
                     options,
                     input_schema,
                     slice: _slice,
+                    apply,
                 }));
             }
 
@@ -524,12 +526,10 @@ pub fn create_physical_plan(
             Ok(Box::new(executors::JoinExec::new(
                 input_left,
                 input_right,
-                options.how,
                 left_on,
                 right_on,
                 parallel,
-                options.suffix,
-                options.slice,
+                options.args,
             )))
         }
         HStack { input, exprs, .. } => {

@@ -33,7 +33,9 @@ def test_groupby_flatten_list() -> None:
 
 def test_groupby_flatten_string() -> None:
     df = pl.DataFrame({"group": ["a", "b", "b"], "values": ["foo", "bar", "baz"]})
-    result = df.groupby("group", maintain_order=True).agg(pl.col("values").flatten())
+    result = df.groupby("group", maintain_order=True).agg(
+        pl.col("values").str.explode()
+    )
 
     expected = pl.DataFrame(
         {
@@ -299,4 +301,15 @@ def test_logical_explode() -> None:
 def test_explode_inner_null() -> None:
     expected = pl.DataFrame({"A": [None, None]}, schema={"A": pl.Null})
     out = pl.DataFrame({"A": [[], []]}, schema={"A": pl.List(pl.Null)}).explode("A")
+    assert_frame_equal(out, expected)
+
+
+def test_explode_array() -> None:
+    out = pl.DataFrame(
+        {"a": [[1, 2], [2, 3]], "b": [1, 2]},
+        schema_overrides={"a": pl.Array(2, inner=pl.Int64)},
+    ).explode("a")
+
+    expected = pl.DataFrame({"a": [1, 2, 2, 3], "b": [1, 1, 2, 2]})
+
     assert_frame_equal(out, expected)

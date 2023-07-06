@@ -463,6 +463,8 @@ pub(crate) fn create_physical_expr(
                 pass_name_to_apply: options.pass_name_to_apply,
                 input_schema: schema.cloned(),
                 allow_threading: !state.has_cache,
+                check_lengths: options.check_lengths(),
+                allow_group_aware: options.allow_group_aware,
             }))
         }
         Function {
@@ -497,6 +499,8 @@ pub(crate) fn create_physical_expr(
                 pass_name_to_apply: options.pass_name_to_apply,
                 input_schema: schema.cloned(),
                 allow_threading: !state.has_cache,
+                check_lengths: options.check_lengths(),
+                allow_group_aware: options.allow_group_aware,
             }))
         }
         Slice {

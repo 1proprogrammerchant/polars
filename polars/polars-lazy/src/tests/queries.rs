@@ -3,7 +3,7 @@ use polars_core::frame::explode::MeltArgs;
 use polars_core::series::ops::NullBehavior;
 
 use super::*;
-#[cfg(feature = "arange")]
+#[cfg(feature = "range")]
 use crate::dsl::arg_sort_by;
 
 #[test]
@@ -268,7 +268,7 @@ fn test_lazy_query_4() {
             base_df,
             [col("uid"), col("day")],
             [col("uid"), col("day")],
-            JoinType::Inner,
+            JoinType::Inner.into(),
         )
         .collect()
         .unwrap();
@@ -368,7 +368,7 @@ fn test_lazy_query_9() -> PolarsResult<()> {
             cities.lazy(),
             [col("Sales.City")],
             [col("Cities.City")],
-            JoinType::Inner,
+            JoinType::Inner.into(),
         )
         .groupby([col("Cities.Country")])
         .agg([col("Sales.Amount").sum().alias("sum")])
@@ -1017,7 +1017,7 @@ fn test_groupby_cumsum() -> PolarsResult<()> {
 }
 
 #[test]
-#[cfg(feature = "arange")]
+#[cfg(feature = "range")]
 fn test_arg_sort_multiple() -> PolarsResult<()> {
     let df = df![
         "int" => [1, 2, 3, 1, 2],

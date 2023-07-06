@@ -1,30 +1,35 @@
-from polars.functions.eager import align_frames, concat, date_range, time_range
+from polars.functions.as_datatype import (
+    concat_list,
+    concat_str,
+    duration,
+    format,
+    struct,
+)
+from polars.functions.as_datatype import date_ as date
+from polars.functions.as_datatype import datetime_ as datetime
+from polars.functions.as_datatype import time_ as time
+from polars.functions.eager import align_frames, concat
 from polars.functions.lazy import (
     all,
     any,
     apply,
     approx_unique,
-    arange,
     arg_sort_by,
     arg_where,
     avg,
     coalesce,
     col,
     collect_all,
-    concat_list,
-    concat_str,
     corr,
     count,
     cov,
     cumfold,
     cumreduce,
     cumsum,
-    duration,
     element,
     exclude,
     first,
     fold,
-    format,
     from_epoch,
     groups,
     head,
@@ -42,15 +47,13 @@ from polars.functions.lazy import (
     rolling_corr,
     rolling_cov,
     select,
+    sql_expr,
     std,
-    struct,
     sum,
     tail,
     var,
 )
-from polars.functions.lazy import date_ as date
-from polars.functions.lazy import datetime_ as datetime
-from polars.functions.lazy import time_ as time
+from polars.functions.range import arange, date_range, int_range, int_ranges, time_range
 from polars.functions.repeat import ones, repeat, zeros
 from polars.functions.whenthen import when
 
@@ -95,6 +98,8 @@ __all__ = [
     "groups",
     "head",
     "implode",
+    "int_range",
+    "int_ranges",
     "last",
     "lit",
     "map",
@@ -116,4 +121,5 @@ __all__ = [
     "var",
     # polars.functions.whenthen
     "when",
+    "sql_expr",
 ]

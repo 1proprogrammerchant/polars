@@ -116,20 +116,18 @@ def test_window_function_cache() -> None:
     assert out["values_rev"].to_list() == [1, 0, 4, 3, 2]
 
 
-def test_arange_no_rows() -> None:
+def test_window_range_no_rows() -> None:
     df = pl.DataFrame({"x": [5, 5, 4, 4, 2, 2]})
-    expr = pl.arange(0, pl.count()).over("x")
+    expr = pl.int_range(0, pl.count()).over("x")
     out = df.with_columns(expr)
     assert_frame_equal(
-        out, pl.DataFrame({"x": [5, 5, 4, 4, 2, 2], "arange": [0, 1, 0, 1, 0, 1]})
+        out, pl.DataFrame({"x": [5, 5, 4, 4, 2, 2], "int": [0, 1, 0, 1, 0, 1]})
     )
 
     df = pl.DataFrame({"x": []})
     out = df.with_columns(expr)
-    print(out)
-    expected = pl.DataFrame(
-        {"x": [], "arange": []}, schema={"x": pl.Float32, "arange": pl.Int64}
-    )
+
+    expected = pl.DataFrame(schema={"x": pl.Float32, "int": pl.Int64})
     assert_frame_equal(out, expected)
 
 
@@ -246,9 +244,7 @@ def test_window_functions_list_types() -> None:
     # that's why we don't add it to the allowed types.
     assert (
         df.select(
-            pl.col("col_list")
-            .shift_and_fill(None, periods=1)  # type: ignore[arg-type]
-            .alias("list_shifted")
+            pl.col("col_list").shift_and_fill(None, periods=1).alias("list_shifted")
         )
     )["list_shifted"].to_list() == [None, [1], [1], [2]]
 
