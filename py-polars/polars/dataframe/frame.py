@@ -3095,8 +3095,9 @@ class DataFrame:
 
             tbl = pa.table(data)
 
-            # do not remove this
+            # do not remove this import!
             # needed below
+            import pyarrow.parquet  # noqa: F401
 
             pa.parquet.write_table(
                 table=tbl,
@@ -5143,7 +5144,7 @@ class DataFrame:
 
         >>> df = pl.DataFrame(
         ...     {
-        ...         "idx": pl.arange(0, 6, eager=True),
+        ...         "idx": pl.int_range(0, 6, eager=True),
         ...         "A": ["A", "A", "B", "B", "B", "C"],
         ...     }
         ... )
@@ -6562,7 +6563,7 @@ class DataFrame:
         >>> df = pl.DataFrame(
         ...     {
         ...         "col1": list(ascii_uppercase[0:9]),
-        ...         "col2": pl.arange(0, 9, eager=True),
+        ...         "col2": pl.int_range(0, 9, eager=True),
         ...     }
         ... )
         >>> df
@@ -6634,7 +6635,7 @@ class DataFrame:
         if how == "horizontal":
             df = (
                 df.with_columns(
-                    (F.arange(0, n_cols * n_rows, eager=True) % n_cols).alias(
+                    (F.int_range(0, n_cols * n_rows, eager=True) % n_cols).alias(
                         "__sort_order"
                     ),
                 )
