@@ -3239,6 +3239,7 @@ class Expr:
         breaks: list[float],
         labels: list[str] | None = None,
         left_closed: bool = False,
+        include_breaks: bool = False,
     ) -> Self:
         """
         Bin continuous values into discrete categories.
@@ -3251,6 +3252,9 @@ class Expr:
             Labels to assign to bins. If given, the length must be len(probs) + 1.
         left_closed
             Whether intervals should be [) instead of the default of (]
+        include_breaks
+            Include the the right endpoint of the bin each observation falls in.
+            If True, the resulting column will be a Struct.
 
         Examples
         --------
@@ -3291,7 +3295,9 @@ class Expr:
         │ b   ┆ 9   ┆ [5, inf)  │
         └─────┴─────┴───────────┘
         """
-        return self._from_pyexpr(self._pyexpr.cut(breaks, labels, left_closed))
+        return self._from_pyexpr(
+            self._pyexpr.cut(breaks, labels, left_closed, include_breaks)
+        )
 
     def qcut(
         self,
@@ -3299,6 +3305,7 @@ class Expr:
         labels: list[str] | None = None,
         left_closed: bool = False,
         allow_duplicates: bool = False,
+        include_breaks: bool = False,
     ) -> Self:
         """
         Bin continuous values into discrete categories based on their quantiles.
@@ -3317,6 +3324,9 @@ class Expr:
             If True, the resulting quantile breaks don't have to be unique. This can
             happen even with unique probs depending on the data. Duplicates will be
             dropped, resulting in fewer bins.
+        include_breaks
+            Include the the right endpoint of the bin each observation falls in.
+            If True, the resulting column will be a Struct.
 
 
         Examples
@@ -3374,11 +3384,86 @@ class Expr:
         │ b   ┆ 8   ┆ hi  │
         │ b   ┆ 9   ┆ hi  │
         └─────┴─────┴─────┘
-
+        >>> df.with_columns(q=pl.col("x").qcut([0.25, 0.5], include_breaks=True))
+        shape: (10, 3)
+        ┌─────┬─────┬───────────────────────┐
+        │ g   ┆ x   ┆ q                     │
+        │ --- ┆ --- ┆ ---                   │
+        │ str ┆ i64 ┆ struct[2]             │
+        ╞═════╪═════╪═══════════════════════╡
+        │ a   ┆ 0   ┆ {2.25,"(-inf, 2.25]"} │
+        │ a   ┆ 1   ┆ {2.25,"(-inf, 2.25]"} │
+        │ a   ┆ 2   ┆ {2.25,"(-inf, 2.25]"} │
+        │ a   ┆ 3   ┆ {4.5,"(2.25, 4.5]"}   │
+        │ …   ┆ …   ┆ …                     │
+        │ b   ┆ 6   ┆ {inf,"(4.5, inf]"}    │
+        │ b   ┆ 7   ┆ {inf,"(4.5, inf]"}    │
+        │ b   ┆ 8   ┆ {inf,"(4.5, inf]"}    │
+        │ b   ┆ 9   ┆ {inf,"(4.5, inf]"}    │
+        └─────┴─────┴───────────────────────┘
         """
         return self._from_pyexpr(
-            self._pyexpr.qcut(probs, labels, left_closed, allow_duplicates)
+            self._pyexpr.qcut(
+                probs, labels, left_closed, allow_duplicates, include_breaks
+            )
         )
+
+    def rle(self) -> Self:
+        """
+        Get the lengths of runs of identical values.
+
+        Returns
+        -------
+            A Struct Series containing "lengths" and "values" Fields
+
+        Examples
+        --------
+        >>> df = pl.DataFrame(pl.Series("s", [1, 1, 2, 1, None, 1, 3, 3]))
+        >>> df.select(pl.col("s").rle()).unnest("s")
+        shape: (6, 2)
+        ┌─────────┬────────┐
+        │ lengths ┆ values │
+        │ ---     ┆ ---    │
+        │ i32     ┆ i64    │
+        ╞═════════╪════════╡
+        │ 2       ┆ 1      │
+        │ 1       ┆ 2      │
+        │ 1       ┆ 1      │
+        │ 1       ┆ null   │
+        │ 1       ┆ 1      │
+        │ 2       ┆ 3      │
+        └─────────┴────────┘
+        """
+        return self._from_pyexpr(self._pyexpr.rle())
+
+    def rle_id(self) -> Self:
+        """
+        Map values to run IDs.
+
+        Similar to RLE, but it maps each value to an ID corresponding to the run into
+        which it falls. This is especially useful when you want to define groups by
+        runs of identical values rather than the values themselves.
+
+
+        Examples
+        --------
+        >>> df = pl.DataFrame(dict(a=[1, 2, 1, 1, 1], b=["x", "x", None, "y", "y"]))
+        >>> # It works on structs of multiple values too!
+        >>> df.with_columns(a_r=pl.col("a").rle_id(), ab_r=pl.struct("a", "b").rle_id())
+        shape: (5, 4)
+        ┌─────┬──────┬─────┬──────┐
+        │ a   ┆ b    ┆ a_r ┆ ab_r │
+        │ --- ┆ ---  ┆ --- ┆ ---  │
+        │ i64 ┆ str  ┆ u32 ┆ u32  │
+        ╞═════╪══════╪═════╪══════╡
+        │ 1   ┆ x    ┆ 0   ┆ 0    │
+        │ 2   ┆ x    ┆ 1   ┆ 1    │
+        │ 1   ┆ null ┆ 2   ┆ 2    │
+        │ 1   ┆ y    ┆ 2   ┆ 3    │
+        │ 1   ┆ y    ┆ 2   ┆ 3    │
+        └─────┴──────┴─────┴──────┘
+        """
+        return self._from_pyexpr(self._pyexpr.rle_id())
 
     def filter(self, predicate: Expr) -> Self:
         """
@@ -3407,14 +3492,14 @@ class Expr:
         ...     ]
         ... ).sort("group_col")
         shape: (2, 3)
-        ┌───────────┬──────┬─────┐
-        │ group_col ┆ lt   ┆ gte │
-        │ ---       ┆ ---  ┆ --- │
-        │ str       ┆ i64  ┆ i64 │
-        ╞═══════════╪══════╪═════╡
-        │ g1        ┆ 1    ┆ 2   │
-        │ g2        ┆ null ┆ 3   │
-        └───────────┴──────┴─────┘
+        ┌───────────┬─────┬─────┐
+        │ group_col ┆ lt  ┆ gte │
+        │ ---       ┆ --- ┆ --- │
+        │ str       ┆ i64 ┆ i64 │
+        ╞═══════════╪═════╪═════╡
+        │ g1        ┆ 1   ┆ 2   │
+        │ g2        ┆ 0   ┆ 3   │
+        └───────────┴─────┴─────┘
 
         """
         return self._from_pyexpr(self._pyexpr.filter(predicate._pyexpr))
@@ -3445,14 +3530,14 @@ class Expr:
         ...     ]
         ... ).sort("group_col")
         shape: (2, 3)
-        ┌───────────┬──────┬─────┐
-        │ group_col ┆ lt   ┆ gte │
-        │ ---       ┆ ---  ┆ --- │
-        │ str       ┆ i64  ┆ i64 │
-        ╞═══════════╪══════╪═════╡
-        │ g1        ┆ 1    ┆ 2   │
-        │ g2        ┆ null ┆ 3   │
-        └───────────┴──────┴─────┘
+        ┌───────────┬─────┬─────┐
+        │ group_col ┆ lt  ┆ gte │
+        │ ---       ┆ --- ┆ --- │
+        │ str       ┆ i64 ┆ i64 │
+        ╞═══════════╪═════╪═════╡
+        │ g1        ┆ 1   ┆ 2   │
+        │ g2        ┆ 0   ┆ 3   │
+        └───────────┴─────┴─────┘
 
         """
         return self.filter(predicate)
@@ -3527,6 +3612,10 @@ class Expr:
     ) -> Self:
         """
         Apply a custom/user-defined function (UDF) in a GroupBy or Projection context.
+
+        .. warning::
+            This method is much slower than the native expressions API.
+            Only use it if you cannot implement your logic otherwise.
 
         Depending on the context it has the following behavior:
 
@@ -4483,7 +4572,7 @@ class Expr:
         """
         return self.__truediv__(other)
 
-    def pow(self, exponent: int | float | Series | Expr) -> Self:
+    def pow(self, exponent: int | float | None | Series | Expr) -> Self:
         """
         Method equivalent of exponentiation operator ``expr ** exponent``.
 

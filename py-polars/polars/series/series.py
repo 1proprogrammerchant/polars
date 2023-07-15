@@ -828,7 +828,7 @@ class Series:
             raise ValueError("first cast to integer before multiplying datelike dtypes")
         return self._arithmetic(other, "mul", "mul_<>")
 
-    def __pow__(self, exponent: int | float | Series) -> Series:
+    def __pow__(self, exponent: int | float | None | Series) -> Series:
         return self.pow(exponent)
 
     def __rpow__(self, other: Any) -> Series:
@@ -868,6 +868,13 @@ class Series:
 
     def __deepcopy__(self, memo: None = None) -> Self:
         return self.clone()
+
+    def __contains__(self, item: Any) -> bool:
+        # TODO! optimize via `is_in` and `SORTED` flags
+        try:
+            return (self == item).any()
+        except ValueError:
+            return False
 
     def __iter__(self) -> Generator[Any, None, None]:
         if self.dtype == List:
@@ -1414,7 +1421,7 @@ class Series:
         """Reduce this Series to the product value."""
         return self.to_frame().select(F.col(self.name).product()).to_series().item()
 
-    def pow(self, exponent: int | float | Series) -> Series:
+    def pow(self, exponent: int | float | None | Series) -> Series:
         """
         Raise to the power of the given exponent.
 
@@ -1604,9 +1611,9 @@ class Series:
         break_point_label: str = "break_point",
         category_label: str = "category",
         *,
-        maintain_order: bool = False,
-        series: bool = False,
+        series: bool = True,
         left_closed: bool = False,
+        include_breaks: bool = False,
     ) -> DataFrame | Series:
         """
         Bin continuous values into discrete categories.
@@ -1619,15 +1626,20 @@ class Series:
             Labels to assign to the bins. If given the length of labels must be
             len(bins) + 1.
         break_point_label
-            Name given to the breakpoint column. Only used if series == False
+            Name given to the breakpoint column/field. Only used if series == False or
+            include_breaks == True
         category_label
             Name given to the category column. Only used if series == False
         maintain_order
             Keep the order of the original `Series`. Only used if series == False
         series
-            If True, return the a categorical series in the data's original order
+            If True, return the a categorical series in the data's original order.
         left_closed
             Whether intervals should be [) instead of (]
+        include_breaks
+            Include the the right endpoint of the bin each observation falls in.
+            If returning a DataFrame, it will be a column, and if returning a Series
+            it will be a field in a Struct
 
         Returns
         -------
@@ -1636,23 +1648,23 @@ class Series:
         Examples
         --------
         >>> a = pl.Series("a", [v / 10 for v in range(-30, 30, 5)])
-        >>> a.cut([-1, 1])
+        >>> a.cut([-1, 1], series=False)
         shape: (12, 3)
-        ┌──────┬─────────────┬──────────────┐
-        │ a    ┆ break_point ┆ category     │
-        │ ---  ┆ ---         ┆ ---          │
-        │ f64  ┆ f64         ┆ cat          │
-        ╞══════╪═════════════╪══════════════╡
-        │ -3.0 ┆ -1.0        ┆ (-inf, -1.0] │
-        │ -2.5 ┆ -1.0        ┆ (-inf, -1.0] │
-        │ -2.0 ┆ -1.0        ┆ (-inf, -1.0] │
-        │ -1.5 ┆ -1.0        ┆ (-inf, -1.0] │
-        │ …    ┆ …           ┆ …            │
-        │ 1.0  ┆ 1.0         ┆ (-1.0, 1.0]  │
-        │ 1.5  ┆ inf         ┆ (1.0, inf]   │
-        │ 2.0  ┆ inf         ┆ (1.0, inf]   │
-        │ 2.5  ┆ inf         ┆ (1.0, inf]   │
-        └──────┴─────────────┴──────────────┘
+        ┌──────┬─────────────┬────────────┐
+        │ a    ┆ break_point ┆ category   │
+        │ ---  ┆ ---         ┆ ---        │
+        │ f64  ┆ f64         ┆ cat        │
+        ╞══════╪═════════════╪════════════╡
+        │ -3.0 ┆ -1.0        ┆ (-inf, -1] │
+        │ -2.5 ┆ -1.0        ┆ (-inf, -1] │
+        │ -2.0 ┆ -1.0        ┆ (-inf, -1] │
+        │ -1.5 ┆ -1.0        ┆ (-inf, -1] │
+        │ …    ┆ …           ┆ …          │
+        │ 1.0  ┆ 1.0         ┆ (-1, 1]    │
+        │ 1.5  ┆ inf         ┆ (1, inf]   │
+        │ 2.0  ┆ inf         ┆ (1, inf]   │
+        │ 2.5  ┆ inf         ┆ (1, inf]   │
+        └──────┴─────────────┴────────────┘
         >>> a.cut([-1, 1], series=True)
         shape: (12,)
         Series: 'a' [cat]
@@ -1688,21 +1700,26 @@ class Series:
             "[1, inf)"
         ]
         """
-        if series:
+        n = self._s.name()
+
+        if not series:
+            # "Old style" always includes breaks
             return (
                 self.to_frame()
-                .select(F.col(self._s.name()).cut(bins, labels, left_closed))
-                .to_series()
+                .with_columns(
+                    F.col(n).cut(bins, labels, left_closed, True).alias(n + "_bin")
+                )
+                .unnest(n + "_bin")
+                .rename({"brk": break_point_label, n + "_bin": category_label})
             )
-        return wrap_df(
-            self._s.cut(
-                Series(break_point_label, bins, dtype=Float64)._s,
-                labels,
-                break_point_label,
-                category_label,
-                maintain_order,
-            )
+        res = (
+            self.to_frame()
+            .select(F.col(n).cut(bins, labels, left_closed, include_breaks))
+            .to_series()
         )
+        if include_breaks:
+            return res.struct.rename_fields([break_point_label, category_label])
+        return res
 
     def qcut(
         self,
@@ -1711,10 +1728,10 @@ class Series:
         labels: list[str] | None = None,
         break_point_label: str = "break_point",
         category_label: str = "category",
-        maintain_order: bool = False,
         series: bool = False,
         left_closed: bool = False,
         allow_duplicates: bool = False,
+        include_breaks: bool = False,
     ) -> DataFrame | Series:
         """
         Bin continuous values into discrete categories based on their quantiles.
@@ -1728,7 +1745,8 @@ class Series:
             Labels to assign to the quantiles. If given the length of labels must be
             len(bins) + 1.
         break_point_label
-            Name given to the breakpoint column. Only used if series == False.
+            Name given to the breakpoint column/field. Only used if series == False or
+            include_breaks == True
         category_label
             Name given to the category column. Only used if series == False.
         maintain_order
@@ -1741,6 +1759,10 @@ class Series:
             If True, the resulting quantile breaks don't have to be unique. This can
             happen even with unique probs depending on the data. Duplicates will be
             dropped, resulting in fewer bins.
+        include_breaks
+            Include the the right endpoint of the bin each observation falls in.
+            If returning a DataFrame, it will be a column, and if returning a Series
+            it will be a field in a Struct
 
         Returns
         -------
@@ -1754,22 +1776,22 @@ class Series:
         Examples
         --------
         >>> a = pl.Series("a", range(-5, 3))
-        >>> a.qcut([0.0, 0.25, 0.75])
+        >>> a.qcut([0.0, 0.25, 0.75], series=False)
         shape: (8, 3)
-        ┌──────┬─────────────┬───────────────┐
-        │ a    ┆ break_point ┆ category      │
-        │ ---  ┆ ---         ┆ ---           │
-        │ f64  ┆ f64         ┆ cat           │
-        ╞══════╪═════════════╪═══════════════╡
-        │ -5.0 ┆ -5.0        ┆ (-inf, -5.0]  │
-        │ -4.0 ┆ -3.25       ┆ (-5.0, -3.25] │
-        │ -3.0 ┆ 0.25        ┆ (-3.25, 0.25] │
-        │ -2.0 ┆ 0.25        ┆ (-3.25, 0.25] │
-        │ -1.0 ┆ 0.25        ┆ (-3.25, 0.25] │
-        │ 0.0  ┆ 0.25        ┆ (-3.25, 0.25] │
-        │ 1.0  ┆ inf         ┆ (0.25, inf]   │
-        │ 2.0  ┆ inf         ┆ (0.25, inf]   │
-        └──────┴─────────────┴───────────────┘
+        ┌─────┬─────────────┬───────────────┐
+        │ a   ┆ break_point ┆ category      │
+        │ --- ┆ ---         ┆ ---           │
+        │ i64 ┆ f64         ┆ cat           │
+        ╞═════╪═════════════╪═══════════════╡
+        │ -5  ┆ -5.0        ┆ (-inf, -5]    │
+        │ -4  ┆ -3.25       ┆ (-5, -3.25]   │
+        │ -3  ┆ 0.25        ┆ (-3.25, 0.25] │
+        │ -2  ┆ 0.25        ┆ (-3.25, 0.25] │
+        │ -1  ┆ 0.25        ┆ (-3.25, 0.25] │
+        │ 0   ┆ 0.25        ┆ (-3.25, 0.25] │
+        │ 1   ┆ inf         ┆ (0.25, inf]   │
+        │ 2   ┆ inf         ┆ (0.25, inf]   │
+        └─────┴─────────────┴───────────────┘
         >>> a.qcut([0.0, 0.25, 0.75], series=True)
         shape: (8,)
         Series: 'a' [cat]
@@ -1797,25 +1819,92 @@ class Series:
             "[0.25, inf)"
         ]
         """
-        if series:
+        n = self._s.name()
+
+        if not series:
+            # "Old style" always includes breaks
             return (
                 self.to_frame()
-                .select(
-                    F.col(self._s.name()).qcut(
-                        quantiles, labels, left_closed, allow_duplicates
-                    )
+                .with_columns(
+                    F.col(n)
+                    .qcut(quantiles, labels, left_closed, allow_duplicates, True)
+                    .alias(n + "_bin")
                 )
-                .to_series()
+                .unnest(n + "_bin")
+                .rename({"brk": break_point_label, n + "_bin": category_label})
             )
-        return wrap_df(
-            self._s.qcut(
-                Series(quantiles, dtype=Float64)._s,
-                labels,
-                break_point_label,
-                category_label,
-                maintain_order,
+        res = (
+            self.to_frame()
+            .select(
+                F.col(n).qcut(
+                    quantiles, labels, left_closed, allow_duplicates, include_breaks
+                )
             )
+            .to_series()
         )
+        if include_breaks:
+            return res.struct.rename_fields([break_point_label, category_label])
+        return res
+
+    def rle(self) -> Series:
+        """
+        Get the lengths of runs of identical values.
+
+        Returns
+        -------
+            A Struct Series containing "lengths" and "values" Fields
+
+        Examples
+        --------
+        >>> s = pl.Series("s", [1, 1, 2, 1, None, 1, 3, 3])
+        >>> s.rle().struct.unnest()
+        shape: (6, 2)
+        ┌─────────┬────────┐
+        │ lengths ┆ values │
+        │ ---     ┆ ---    │
+        │ i32     ┆ i64    │
+        ╞═════════╪════════╡
+        │ 2       ┆ 1      │
+        │ 1       ┆ 2      │
+        │ 1       ┆ 1      │
+        │ 1       ┆ null   │
+        │ 1       ┆ 1      │
+        │ 2       ┆ 3      │
+        └─────────┴────────┘
+        """
+        return self.to_frame().select(F.col(self.name).rle()).to_series()
+
+    def rle_id(self) -> Series:
+        """
+        Map values to run IDs.
+
+        Similar to RLE, but it maps each value to an ID corresponding to the run into
+        which it falls. This is especially useful when you want to define groups by
+        runs of identical values rather than the values themselves.
+
+        Returns
+        -------
+            Series
+
+
+        Examples
+        --------
+        >>> s = pl.Series("s", [1, 1, 2, 1, None, 1, 3, 3])
+        >>> s.rle_id()
+        shape: (8,)
+        Series: 's' [u32]
+        [
+            0
+            0
+            1
+            2
+            3
+            4
+            5
+            5
+        ]
+        """
+        return self.to_frame().select(F.col(self.name).rle_id()).to_series()
 
     def hist(
         self,
@@ -2269,12 +2358,12 @@ class Series:
                 self._s.append(other._s)
             else:
                 self._s.extend(other._s)
+            return self
         except RuntimeError as exc:
             if str(exc) == "Already mutably borrowed":
-                self.append(other.clone(), append_chunks=append_chunks)
+                return self.append(other.clone(), append_chunks=append_chunks)
             else:
                 raise exc
-        return self
 
     def filter(self, predicate: Series | list[bool]) -> Self:
         """
@@ -4275,6 +4364,10 @@ class Series:
         """
         Apply a custom/user-defined function (UDF) over elements in this Series.
 
+        .. warning::
+            This method is much slower than the native expressions API.
+            Only use it if you cannot implement your logic otherwise.
+
         If the function returns a different datatype, the return_dtype arg should
         be set, otherwise the method will fail.
 
@@ -6074,4 +6167,6 @@ def _resolve_datetime_dtype(
             dtype = Datetime("us")
         elif time_unit == "ms":
             dtype = Datetime("ms")
+        elif time_unit == "D":
+            dtype = Date
     return dtype
