@@ -2073,17 +2073,24 @@ class Series:
 
     def alias(self, name: str) -> Series:
         """
-        Return a copy of the Series with a new alias/name.
+        Rename the series.
 
         Parameters
         ----------
         name
-            New name.
+            The new name.
 
         Examples
         --------
-        >>> srs = pl.Series("x", [1, 2, 3])
-        >>> new_aliased_srs = srs.alias("y")
+        >>> s = pl.Series("a", [1, 2, 3])
+        >>> s.alias("b")
+        shape: (3,)
+        Series: 'b' [i64]
+        [
+                1
+                2
+                3
+        ]
 
         """
         s = self.clone()
@@ -4516,6 +4523,12 @@ class Series:
         Series
 
         """
+        # TODO:
+        # from polars.utils.udfs import warn_on_inefficient_apply
+        # warn_on_inefficient_apply(
+        #     function, columns=[self.name], apply_target="series"
+        # )
+
         if return_dtype is None:
             pl_return_dtype = None
         else:
@@ -5363,12 +5376,12 @@ class Series:
 
     def interpolate(self, method: InterpolationMethod = "linear") -> Series:
         """
-        Interpolate intermediate values. The interpolation method is linear.
+        Fill null values using interpolation.
 
         Parameters
         ----------
         method : {'linear', 'nearest'}
-            Interpolation method
+            Interpolation method.
 
         Examples
         --------
