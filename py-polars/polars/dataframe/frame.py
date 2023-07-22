@@ -2549,11 +2549,13 @@ class DataFrame:
         hidden_columns: Sequence[str] | None = None,
         hide_gridlines: bool = False,
         sheet_zoom: int | None = None,
-        freeze_panes: str
-        | tuple[str, int, int]
-        | tuple[int, int]
-        | tuple[int, int, int, int]
-        | None = None,
+        freeze_panes: (
+            str
+            | tuple[int, int]
+            | tuple[str, int, int]
+            | tuple[int, int, int, int]
+            | None
+        ) = None,
     ) -> Workbook:
         """
         Write frame data to a table in an Excel workbook/worksheet.
@@ -3435,7 +3437,7 @@ class DataFrame:
         *,
         include_header: bool = False,
         header_name: str = "column",
-        column_names: Iterable[str] | None = None,
+        column_names: str | Iterable[str] | None = None,
     ) -> Self:
         """
         Transpose a DataFrame over the diagonal.
@@ -3448,8 +3450,8 @@ class DataFrame:
             If `include_header` is set, this determines the name of the column that will
             be inserted.
         column_names
-            Optional iterable that yields column names. Will be used to
-            replace the columns in the DataFrame.
+            Optional iterable yielding strings or a string naming an existing column.
+            These will name the value (non-header) columns in the transposed data.
 
         Notes
         -----
@@ -3521,8 +3523,35 @@ class DataFrame:
         │ 1           ┆ 2           ┆ 3           │
         └─────────────┴─────────────┴─────────────┘
 
+        Use an existing column as the new column names
+
+        >>> df = pl.DataFrame(dict(id=["a", "b", "c"], col1=[1, 3, 2], col2=[3, 4, 6]))
+        >>> df.transpose(column_names="id")
+        shape: (2, 3)
+        ┌─────┬─────┬─────┐
+        │ a   ┆ b   ┆ c   │
+        │ --- ┆ --- ┆ --- │
+        │ i64 ┆ i64 ┆ i64 │
+        ╞═════╪═════╪═════╡
+        │ 1   ┆ 3   ┆ 2   │
+        │ 3   ┆ 4   ┆ 6   │
+        └─────┴─────┴─────┘
+        >>> df.transpose(include_header=True, header_name="new_id", column_names="id")
+        shape: (2, 4)
+        ┌────────┬─────┬─────┬─────┐
+        │ new_id ┆ a   ┆ b   ┆ c   │
+        │ ---    ┆ --- ┆ --- ┆ --- │
+        │ str    ┆ i64 ┆ i64 ┆ i64 │
+        ╞════════╪═════╪═════╪═════╡
+        │ col1   ┆ 1   ┆ 3   ┆ 2   │
+        │ col2   ┆ 3   ┆ 4   ┆ 6   │
+        └────────┴─────┴─────┴─────┘
         """
-        df = self._from_pydf(self._df.transpose(include_header, header_name))
+        pydf = self._df
+        if isinstance(column_names, str):
+            pydf = self.drop(column_names)._df
+            column_names = self._df.column(column_names).to_list()
+        df = self._from_pydf(pydf.transpose(include_header, header_name))
         if column_names is not None:
             names = []
             n = df.width
