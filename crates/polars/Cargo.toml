@@ -11,17 +11,17 @@ repository = { workspace = true }
 description = "DataFrame library based on Apache Arrow"
 
 [dependencies]
-polars-algo = { version = "0.31.1", path = "../polars-algo", optional = true }
-polars-core = { version = "0.31.1", path = "../polars-core", features = ["docs"], default-features = false }
-polars-io = { version = "0.31.1", path = "../polars-io", features = [], default-features = false, optional = true }
-polars-lazy = { version = "0.31.1", path = "../polars-lazy", features = [], default-features = false, optional = true }
-polars-ops = { version = "0.31.1", path = "../polars-ops" }
-polars-sql = { version = "0.31.1", path = "../polars-sql", default-features = false, optional = true }
-polars-time = { version = "0.31.1", path = "../polars-time", default-features = false, optional = true }
+polars-algo = { version = "0.32.0", path = "../polars-algo", optional = true }
+polars-core = { version = "0.32.0", path = "../polars-core", features = ["docs"], default-features = false }
+polars-io = { version = "0.32.0", path = "../polars-io", features = [], default-features = false, optional = true }
+polars-lazy = { version = "0.32.0", path = "../polars-lazy", features = [], default-features = false, optional = true }
+polars-ops = { version = "0.32.0", path = "../polars-ops" }
+polars-sql = { version = "0.32.0", path = "../polars-sql", default-features = false, optional = true }
+polars-time = { version = "0.32.0", path = "../polars-time", default-features = false, optional = true }
 
 [dev-dependencies]
-ahash = "0.8"
-rand = "0.8"
+ahash = { workspace = true }
+rand = { workspace = true }
 
 [build-dependencies]
 version_check = { workspace = true }
@@ -184,6 +184,7 @@ list_sets = ["polars-lazy/list_sets"]
 list_any_all = ["polars-lazy/list_any_all"]
 cutqcut = ["polars-lazy/cutqcut"]
 rle = ["polars-lazy/rle"]
+extract_groups = ["polars-lazy/extract_groups"]
 
 test = [
   "lazy",
@@ -327,6 +328,7 @@ docs-selection = [
   "propagate_nans",
   "coalesce",
   "dynamic_groupby",
+  "extract_groups",
 ]
 
 bench = [
